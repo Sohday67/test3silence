@@ -3,26 +3,23 @@
 //  YTLiteSkipSilence
 //
 //  Real-time silence detector + rate modulator, attached to YouTube's
-//  AVPlayerItem via MTAudioProcessingTap. Algorithm inspired by Overcast's
-//  OCAudioStreamer "skipSilences" / "silenceSkippingSpeed" pipeline.
-//
-//  NOTE: this is an independent reimplementation. The Overcast IPA was used
-//  only as a behavioural reference; no code was copied verbatim.
+//  AVPlayerItem via MTAudioProcessingTap.
 //
 
 #import "SkipSilenceManager.h"
 #import "SkipSilenceDefaults.h"
 #import <MediaToolbox/MediaToolbox.h>
 #import <CoreMedia/CoreMedia.h>
+#import <objc/runtime.h>
 
 // ---- tunables --------------------------------------------------------------
-const NSUInteger   kSkipSilenceRMSWindowFrames   = 256;  // ~5 ms @ 48 kHz
+const NSUInteger   kSkipSilenceRMSWindowFrames   = 256;
 const NSTimeInterval kSkipSilenceDefaultHoldTime   = 0.15;
 const NSTimeInterval kSkipSilenceDefaultReleaseTime = 0.04;
 const float         kSkipSilenceDefaultThresholdDBFS = -35.0f;
 const float         kSkipSilenceDefaultSilenceRate   = 2.5f;
 
-// ---- per-tap context -------------------------------------------------------
+// ---- per-tap context (passed via clientInfo) -------------------------------
 
 typedef struct {
     __unsafe_unretained SkipSilenceManager *manager;
@@ -30,32 +27,24 @@ typedef struct {
     float sampleRate;
 } TapContext;
 
-// ---- C callbacks (the tap invokes these directly) --------------------------
-
-// Pending context — set immediately before MTAudioProcessingTapCreate and
-// read by tapInitCallback (which is invoked synchronously during Create).
-// We hold it via NSValue-wrapped pointers so ARC doesn't release the
-// underlyings while the tap is being constructed.
-static __weak SkipSilenceManager *sPendingManager = nil;
-static __weak AVPlayerItem        *sPendingItem    = nil;
+// ---- C callbacks -----------------------------------------------------------
 
 static void *tapInitCallback(MTAudioProcessingTapRef tap,
                              void *clientInfo,
                              void **tapStorageOut)
 {
-    TapContext *ctx = (TapContext *)calloc(1, sizeof(TapContext));
-    ctx->manager = sPendingManager;
-    ctx->item    = sPendingItem;
-    ctx->sampleRate = 48000.0f;
-    if (tapStorageOut) *tapStorageOut = ctx;
-    return NULL; // we don't need an additional client storage return
+    // clientInfo is the heap-allocated TapContext passed to MTAudioProcessingTapCreate.
+    // We pass it through as the tap storage so the process callback can read it.
+    if (tapStorageOut) *tapStorageOut = clientInfo;
+    return clientInfo ? clientInfo : NULL;
 }
 
 static void tapFinalizeCallback(MTAudioProcessingTapRef tap, void *tapStorage)
 {
-    if (tapStorage) {
-        free(tapStorage);
-    }
+    // TapContext is owned by SkipSilenceManager (it frees it on detach).
+    // Nothing to free here - just clear the pointer in the manager.
+    (void)tap;
+    (void)tapStorage;
 }
 
 static void tapPrepareCallback(MTAudioProcessingTapRef tap, void *tapStorage,
@@ -63,13 +52,9 @@ static void tapPrepareCallback(MTAudioProcessingTapRef tap, void *tapStorage,
                                const AudioStreamBasicDescription *processingFormat,
                                const AudioStreamBasicDescription *outputFormat)
 {
-    // Capture the actual sample rate so our time math is correct.
     TapContext *ctx = (TapContext *)tapStorage;
     if (ctx && processingFormat && processingFormat->mSampleRate > 0) {
         ctx->sampleRate = (float)processingFormat->mSampleRate;
-        @synchronized (ctx->manager) {
-            [ctx->manager->_itemToSampleRate setObject:@(ctx->sampleRate) forKey:ctx->item];
-        }
     }
 }
 
@@ -98,8 +83,8 @@ static void tapProcessCallback(MTAudioProcessingTapRef tap, void *tapStorage,
     if (ctx == NULL || ctx->manager == nil || ctx->item == nil) {
         return;
     }
-    SkipSilenceManager *mgr = ctx->manager;
-    AVPlayerItem        *item = ctx->item;
+    __strong SkipSilenceManager *mgr = ctx->manager;
+    AVPlayerItem *item = ctx->item;
     float sampleRate = ctx->sampleRate > 0 ? ctx->sampleRate : 48000.0f;
 
     // Compute RMS across all channels & frames in this buffer.
@@ -108,9 +93,6 @@ static void tapProcessCallback(MTAudioProcessingTapRef tap, void *tapStorage,
     for (UInt32 bufIdx = 0; bufIdx < bufferListInOut->mNumberBuffers; bufIdx++) {
         AudioBuffer *ab = &bufferListInOut->mBuffers[bufIdx];
         if (ab->mData == NULL || ab->mDataByteSize == 0) continue;
-        // Try Float32 first (most common). If the format isn't Float32 we
-        // still treat the bytes as Float32 — worst case the RMS is wrong
-        // for one buffer, which is harmless for our state machine.
         UInt32 framesHere = ab->mDataByteSize / sizeof(Float32);
         Float32 *p = (Float32 *)ab->mData;
         for (UInt32 i = 0; i < framesHere; i++) {
@@ -132,18 +114,18 @@ static void tapProcessCallback(MTAudioProcessingTapRef tap, void *tapStorage,
 
 @interface SkipSilenceManager ()
 {
-    dispatch_queue_t _queue;                       // serialises all tap setup/teardown
-    NSMapTable<AVPlayerItem *, NSValue *> *_itemToTap;     // value wraps MTAudioProcessingTapRef
+    dispatch_queue_t _queue;
+    NSMapTable<AVPlayerItem *, NSValue *> *_itemToTap;
     NSMapTable<AVPlayerItem *, AVPlayer *> *_itemToPlayer;
     NSMapTable<AVPlayerItem *, NSNumber *> *_itemToSampleRate;
     NSMapTable<AVPlayerItem *, NSMutableDictionary *> *_itemState;
+    NSMapTable<AVPlayerItem *, NSValue *> *_itemToContext;  // wraps TapContext*
 }
 
 @property (nonatomic, assign) SkipSilenceState state;
 @property (nonatomic, strong) NSMutableSet<AVPlayer *> *activePlayers;
 @end
 
-// Per-item state keys (held in _itemState dict)
 static NSString * const kStateBelowSinceKey  = @"belowSince";
 static NSString * const kStateAboveSinceKey  = @"aboveSince";
 static NSString * const kStateCurrentRateKey = @"currentRate";
@@ -169,6 +151,8 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
                                                   valueOptions:NSMapTableStrongMemory];
         _itemState        = [NSMapTable mapTableWithKeyOptions:NSMapTableObjectPointerPersonality
                                                   valueOptions:NSMapTableStrongMemory];
+        _itemToContext    = [NSMapTable mapTableWithKeyOptions:NSMapTableObjectPointerPersonality
+                                                  valueOptions:NSMapTableStrongMemory];
         _activePlayers    = [NSMutableSet set];
         _userPlaybackRate = 1.0f;
         _enabled = [SkipSilenceDefaults enabled];
@@ -184,7 +168,7 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
     _releaseTime   = [SkipSilenceDefaults releaseTime];
 }
 
-#pragma mark – public properties
+#pragma mark - public properties
 
 - (void)setEnabled:(BOOL)enabled {
     @synchronized (self) {
@@ -194,7 +178,6 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
     [SkipSilenceDefaults setEnabled:enabled];
     if (!enabled) {
         [self detachAll];
-        // Restore user rate on all players we touched
         NSArray<AVPlayer *> *players;
         @synchronized (self) {
             players = [self->_activePlayers allObjects];
@@ -231,7 +214,7 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
     }
 }
 
-#pragma mark – tap lifecycle
+#pragma mark - tap lifecycle
 
 - (void)attachToPlayerItem:(AVPlayerItem *)item {
     if (item == nil) return;
@@ -239,12 +222,12 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
 
     dispatch_async(_queue, ^{
         @synchronized (self) {
-            if ([self->_itemToTap objectForKey:item] != nil) return; // already attached
+            if ([self->_itemToTap objectForKey:item] != nil) return;
         }
 
-        // Audio tracks may not be available immediately. Retry if needed.
         NSArray<AVAssetTrack *> *audioTracks = [item.asset tracksWithMediaType:AVMediaTypeAudio];
         if (audioTracks.count == 0) {
+            // Audio tracks may not be available yet - retry shortly.
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                            self->_queue, ^{
                 [self attachToPlayerItem:item];
@@ -252,12 +235,15 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
             return;
         }
 
-        // Set up the pending context for the synchronous init callback.
-        sPendingManager = self;
-        sPendingItem    = item;
+        // Allocate the per-tap context (freed on detach).
+        TapContext *ctx = (TapContext *)calloc(1, sizeof(TapContext));
+        ctx->manager = self;
+        ctx->item    = item;
+        ctx->sampleRate = 48000.0f;
 
         MTAudioProcessingTapCallbacks callbacks = {0};
         callbacks.version    = kMTAudioProcessingTapCallbacksVersion_0;
+        callbacks.clientInfo = ctx;
         callbacks.init       = tapInitCallback;
         callbacks.finalize   = tapFinalizeCallback;
         callbacks.prepare    = tapPrepareCallback;
@@ -268,10 +254,8 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
         OSStatus status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
                                                      kMTAudioProcessingTapCreationFlag_PreEffects,
                                                      &tap);
-        sPendingManager = nil;
-        sPendingItem    = nil;
-
         if (status != noErr || tap == NULL) {
+            free(ctx);
             return;
         }
 
@@ -288,9 +272,10 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
         item.audioMix = mix;
 
         @synchronized (self) {
-            // Wrap the tap pointer in NSValue so NSMapTable can retain it.
             NSValue *tapVal = [NSValue valueWithPointer:tap];
+            NSValue *ctxVal = [NSValue valueWithPointer:ctx];
             [self->_itemToTap setObject:tapVal forKey:item];
+            [self->_itemToContext setObject:ctxVal forKey:item];
             NSMutableDictionary *st = [NSMutableDictionary dictionary];
             st[kStateBelowSinceKey]  = [NSNull null];
             st[kStateAboveSinceKey]  = [NSNull null];
@@ -307,12 +292,17 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
     dispatch_async(_queue, ^{
         @synchronized (self) {
             if ([self->_itemToTap objectForKey:item] == nil) return;
-            // Clearing the audioMix releases the tap.
             item.audioMix = nil;
             [self->_itemToTap removeObjectForKey:item];
             [self->_itemToPlayer removeObjectForKey:item];
             [self->_itemToSampleRate removeObjectForKey:item];
             [self->_itemState removeObjectForKey:item];
+            NSValue *ctxVal = [self->_itemToContext objectForKey:item];
+            if (ctxVal) {
+                TapContext *ctx = (TapContext *)[ctxVal pointerValue];
+                if (ctx) free(ctx);
+                [self->_itemToContext removeObjectForKey:item];
+            }
         }
         [self restoreUserRateForItem:item];
     });
@@ -354,7 +344,7 @@ static NSString * const kStateCurrentRateKey = @"currentRate";
     }
 }
 
-#pragma mark – detector state machine
+#pragma mark - detector state machine
 
 - (void)feedSample:(float)dbfs
           duration:(NSTimeInterval)duration

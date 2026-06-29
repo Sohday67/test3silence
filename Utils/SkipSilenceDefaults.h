@@ -2,8 +2,8 @@
 //  SkipSilenceDefaults.h
 //  YTLiteSkipSilence
 //
-//  Thin wrapper around NSUserDefaults with the suite name "com.dvntm.ytlite.skipsilence".
-//  Mirrors the pattern YTLite uses (YTLUserDefaults / ytlBool / ytlSetBool).
+//  Thin wrapper around NSUserDefaults with the suite name
+//  "com.dvntm.ytlite.skipsilence".
 //
 
 #import <Foundation/Foundation.h>
@@ -13,19 +13,18 @@ NS_ASSUME_NONNULL_BEGIN
 #define kSkipSilenceDefaultsSuite @"com.dvntm.ytlite.skipsilence"
 
 // Setting keys (also used by YTVideoOverlay ExtraBooleanKeys & Settings.x rows)
-extern NSString * const kSkipSilenceEnabledKey;       // BOOL master toggle
-extern NSString * const kSkipSilenceThresholdKey;     // float, dBFS, default -35
-extern NSString * const kSkipSilenceRateKey;          // float, default 2.5
-extern NSString * const kSkipSilenceHoldTimeKey;      // float seconds, default 0.15
-extern NSString * const kSkipSilenceReleaseTimeKey;   // float seconds, default 0.04
-extern NSString * const kSkipSilencePositionKey;      // int 0=top, 1=bottom (YTVideoOverlay)
-extern NSString * const kSkipSilenceShowSavedTimeKey; // BOOL - show "Xs saved" toast
+extern NSString * const kSkipSilenceEnabledKey;
+extern NSString * const kSkipSilenceThresholdKey;
+extern NSString * const kSkipSilenceRateKey;
+extern NSString * const kSkipSilenceHoldTimeKey;
+extern NSString * const kSkipSilenceReleaseTimeKey;
+extern NSString * const kSkipSilencePositionKey;
+extern NSString * const kSkipSilenceShowSavedTimeKey;
 
 @interface SkipSilenceDefaults : NSObject
 
 + (NSUserDefaults *)standardDefaults;
 
-// Typed accessors
 + (BOOL)enabled;
 + (void)setEnabled:(BOOL)enabled;
 
@@ -47,7 +46,6 @@ extern NSString * const kSkipSilenceShowSavedTimeKey; // BOOL - show "Xs saved" 
 + (BOOL)showSavedTime;
 + (void)setShowSavedTime:(BOOL)b;
 
-// Cumulative seconds of audio skipped (persisted across launches)
 + (NSTimeInterval)totalSavedSeconds;
 + (void)addSavedSeconds:(NSTimeInterval)delta;
 + (void)resetSavedSeconds;

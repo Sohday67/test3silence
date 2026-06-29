@@ -1,6 +1,6 @@
 /*
  *  Reachability.h
- *  From Tony Million's reachability – trimmed for YTLiteSkipSilence.
+ *  From Tony Million's reachability - trimmed for YTLiteSkipSilence.
  *  Public domain (https://github.com/tonymillion/Reachability).
  */
 

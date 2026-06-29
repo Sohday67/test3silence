@@ -2,9 +2,6 @@
 //  NSBundle+YTSkipSilence.h
 //  YTLiteSkipSilence
 //
-//  Resolves the YTLiteSkipSilence.bundle regardless of install layout
-//  (jailbroken / rootless / roothide / sideloaded-embedded).
-//
 
 #import <Foundation/Foundation.h>
 

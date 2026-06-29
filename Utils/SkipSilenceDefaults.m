@@ -27,7 +27,7 @@ static NSString * const kSkipSilenceTotalSavedKey = @"skipSilenceTotalSavedSecon
             kSkipSilenceRateKey:          @2.5f,
             kSkipSilenceHoldTimeKey:      @0.15f,
             kSkipSilenceReleaseTimeKey:   @0.04f,
-            kSkipSilencePositionKey:      @1,         // bottom (next to fullscreen) by default
+            kSkipSilencePositionKey:      @1,
             kSkipSilenceShowSavedTimeKey: @YES,
             kSkipSilenceTotalSavedKey:    @0.0
         };

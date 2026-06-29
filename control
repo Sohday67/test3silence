@@ -3,7 +3,7 @@ Name: YTLiteSkipSilence
 Depends: mobilesubstrate (>= 0.9.5000), firmware (>= 13.0), com.ps.ytvideooverlay (>= 2.0.0)
 Version: 1.0.0
 Architecture: iphoneos-arm64
-Description: Overcast-style Skip Silence + Voice Boost for YouTube, exposed as a clean YTVideoOverlay button.
+Description: Overcast-style Skip Silence for YouTube, exposed as a clean YTVideoOverlay button.
 Maintainer: YTLiteSkipSilence Contributors
 Author: YTLiteSkipSilence Contributors
 Section: Tweaks

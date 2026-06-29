@@ -15,20 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release time (40 ms) before normal rate is restored. Prevents chatter on
   noisy speech.
 - YTVideoOverlay toggle button (default position: bottom player bar, next to
-  fullscreen). Tap to toggle; icon swaps between `speaker.slash.fill` (off)
-  and `speaker.wave.3.fill` (on) via SF Symbols.
+  fullscreen). Tap to toggle; icon swaps via SF Symbols or bundled PNGs.
 - In-app settings section (ID 790) injected into YouTube's settings UI:
   - Master on/off switch
-  - Silence threshold picker: −25, −30, −35, −40, −45 dBFS (default −35)
-  - Silence speed picker: 1.5×, 2.0×, 2.5×, 3.0×, 4.0× (default 2.5×)
-  - "Time saved" readout (cumulative seconds skipped)
-  - "Reset saved time" button
+  - Show Time-Saved Toast toggle
+  - Time-saved readout (cumulative seconds skipped)
+  - Current threshold & speed display
 - User-rate capture: hooks `-[AVPlayer setRate:]`,
   `-[YTPlayerViewController setPlaybackRate:]`, and
   `-[YTMainAppVideoPlayerOverlayViewController setPlaybackRate:]` to learn
   the user's chosen "normal" rate, so silence-speed restores to it.
 - Lightweight HUD toast when silence is being skipped (configurable on/off).
-- Bundle resolution supporting classic jailbreak, rootless, roothide, and
+- Bundle resolution supporting classic jailbreak, rootless, and
   sideloaded-embedded installs.
 - GitHub Actions CI building rootless + roothide + classic `.deb` artifacts.
 
@@ -50,7 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Acknowledgements
 
 - Overcast by Marco Arment — the original Smart Speed algorithm that inspired
-  this tweak. The Overcast IPA was used as a behavioural reference; this is an
-  independent reimplementation under the MIT license.
+  this tweak. Behavioural reference only; no code copied.
 - YTLite by dayanch96 / dvntm — the host tweak whose patterns we mirror.
 - YTVideoOverlay by PoomSmart — the button-hosting framework.

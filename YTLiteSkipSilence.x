@@ -3,104 +3,90 @@
 //  Main tweak file: hooks YouTube's player to install the Skip Silence
 //  audio tap, and registers a clean YTVideoOverlay toggle button.
 //
-//  Architecture
-//  ============
-//  ┌──────────────────────────────────────────────────────────────────┐
-//  │  %ctor                                                          │
-//  │   ├─ dlopen YTVideoOverlay.dylib                                │
-//  │   ├─ initYTVideoOverlay(SkipSilenceKey, {…})                    │
-//  │   ├─ %init(Top), %init(Bottom)                                  │
-//  │   └─ sync tunables from defaults → SkipSilenceManager           │
-//  │                                                                  │
-//  │  AVPlayer hooks (Layer A — capture player→item association)     │
-//  │   ├─ -[AVPlayer replaceCurrentItemWithPlayerItem:]               │
-//  │   ├─ -[AVPlayer setRate:]   (captures YouTube-initiated rate)    │
-//  │   └─ -[AVPlayerItem initWithAsset:]  (tap attach point)          │
-//  │                                                                  │
-//  │  YouTube hooks (Layer B — capture user-chosen normal rate)      │
-//  │   ├─ -[YTPlayerViewController setPlaybackRate:]                  │
-//  │   ├─ -[YTMainAppVideoPlayerOverlayViewController setPlaybackRate:]│
-//  │   └─ -[YTPlayerViewController loadWithPlayerTransition:…]        │
-//  │       → on video change, attach tap to new item                  │
-//  │                                                                  │
-//  │  YTVideoOverlay button hooks                                     │
-//  │   ├─ YTMainAppControlsOverlayView     (top row, optional)        │
-//  │   └─ YTInlinePlayerBarContainerView   (bottom row, default)      │
-//  │       ├─ -buttonImage:               → on/off icon               │
-//  │       └─ -didPressSkipSilence:       → toggle + icon swap        │
-//  └──────────────────────────────────────────────────────────────────┘
+//  Build-time dependencies:
+//    - Theos + iPhoneOS16.5.sdk
+//    - Vendor headers (PoomSmart/YouTubeHeader, PSHeader) - OPTIONAL.
+//      The tweak uses runtime discovery so it builds even without them.
+//
+//  Runtime dependencies:
+//    - com.ps.ytvideooverlay (for the toggle button)
 //
 
 #import <Foundation/Foundation.h>
 #import <AVFoundation/AVFoundation.h>
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 
 #import "SkipSilenceManager.h"
 #import "SkipSilenceDefaults.h"
 #import "NSBundle+YTSkipSilence.h"
 
-// ---- YTVideoOverlay headers (vendored at build time) -----------------------
-//
-// We import these via the THEOS include path. If YTVideoOverlay's source is
-// checked out as a sibling directory (the standard YTLite pattern), the
-// Makefile's -I already adds ../YTVideoOverlay.  These two files declare the
-// metadata keys and the initYTVideoOverlay() helper we need.
-//
-#ifdef __has_include
-#if __has_include("YTVideoOverlay/Header.h")
-#import "YTVideoOverlay/Header.h"
-#elif __has_include(<YTVideoOverlay/Header.h>)
-#import <YTVideoOverlay/Header.h>
-#endif
-#if __has_include("YTVideoOverlay/Init.x")
-#import "YTVideoOverlay/Init.x"
-#elif __has_include(<YTVideoOverlay/Init.x>)
-#import <YTVideoOverlay/Init.x>
-#endif
-#endif
-
-// ---- YouTube headers (vendored at build time via PoomSmart/YouTubeHeader) --
-// We only need a handful of class names; declare forward @interfaces so the
-// Logos hooks type-check without requiring the full header bag.
-@class YTPlayerViewController, YTMainAppVideoPlayerOverlayViewController;
-@class YTMainAppControlsOverlayView, YTInlinePlayerBarContainerView;
-@class YTQTMButton;
-
-@interface YTPlayerViewController : UIViewController
-- (void)loadWithPlayerTransition:(id)arg playbackConfig:(id)cfg;
-- (void)setPlaybackRate:(CGFloat)rate;
-@property (nonatomic, readonly) NSString *contentVideoID;
-@end
-
-@interface YTMainAppVideoPlayerOverlayViewController : UIViewController
-- (void)setPlaybackRate:(CGFloat)rate;
-- (CGFloat)currentPlaybackRate;
-@end
-
-@interface YTMainAppControlsOverlayView : UIView
-@property (nonatomic, readonly) NSMutableDictionary *overlayButtons;
-- (UIImage *)buttonImage:(NSString *)tweakId;
-@end
-
-@interface YTInlinePlayerBarContainerView : UIView
-@property (nonatomic, readonly) NSMutableDictionary *overlayButtons;
-- (UIImage *)buttonImage:(NSString *)tweakId;
-@end
-
 // =============================================================================
-#pragma mark – Constants
+#pragma mark - Constants
 // =============================================================================
 
 #define kSkipSilenceTweakKey @"SkipSilence"
 
+// YTVideoOverlay metadata keys (mirror of PoomSmart/YTVideoOverlay/Init.h)
+#define kYTVO_AccessibilityLabelKey    @"accessibilityLabel"
+#define kYTVO_ToggleKey                @"toggle"
+#define kYTVO_AsTextKey                @"asText"
+#define kYTVO_SelectorKey              @"selector"
+#define kYTVO_UpdateImageOnVisibleKey  @"updateImageOnVisible"
+#define kYTVO_ExtraBooleanKeys         @"extraBooleanKeys"
+
 // =============================================================================
-#pragma mark – Image helpers
+#pragma mark - YTVideoOverlay registration helper (inlined)
 // =============================================================================
 
-// Build a clean icon at runtime. Prefer the bundled PNG assets (predictable
-// rendering across iOS versions); fall back to SF Symbols if missing; final
-// fallback is a simple drawn circle so we never show a blank button.
+// Equivalent to PoomSmart/YTVideoOverlay/Init.x's initYTVideoOverlay().
+// We inline it so we don't need YTVideoOverlay's source at build time.
+static void YTSInitVideoOverlay(NSString *tweakKey, NSDictionary *metadata) {
+    // Try embedded (sideloaded) path first
+    NSString *embedded =
+        [[NSBundle mainBundle].bundlePath stringByAppendingPathComponent:@"Frameworks/YTVideoOverlay.dylib"];
+    if ([[NSFileManager defaultManager] fileExistsAtPath:embedded]) {
+        dlopen(embedded.UTF8String, RTLD_LAZY);
+    }
+    // Then jailbroken paths (rootless + classic)
+    NSArray *jbPaths = @[
+        @"/var/jb/usr/lib/TweakInject/YTVideoOverlay.dylib",
+        @"/var/jb/Library/MobileSubstrate/DynamicLibraries/YTVideoOverlay.dylib",
+        @"/usr/lib/TweakInject/YTVideoOverlay.dylib",
+        @"/Library/MobileSubstrate/DynamicLibraries/YTVideoOverlay.dylib",
+    ];
+    for (NSString *p in jbPaths) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:p]) {
+            dlopen(p.UTF8String, RTLD_LAZY);
+            break;
+        }
+    }
+    // Register our tweak with YTVideoOverlay via runtime discovery
+    Class mgrCls = NSClassFromString(@"YTSettingsSectionItemManager");
+    if (mgrCls == nil) return;
+
+    SEL regSel = NSSelectorFromString(@"registerTweak:metadata:");
+    if (![mgrCls respondsToSelector:regSel]) return;
+
+    NSMethodSignature *sig = [mgrCls methodSignatureForSelector:regSel];
+    if (sig == nil) return;
+
+    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+    [inv setTarget:mgrCls];
+    [inv setSelector:regSel];
+    [inv setArgument:&tweakKey  atIndex:2];
+    [inv setArgument:&metadata  atIndex:3];
+    [inv invoke];
+}
+
+// =============================================================================
+#pragma mark - Image helpers
+// =============================================================================
+
+// Build a clean icon at runtime. Prefer bundled PNGs (predictable rendering
+// across iOS versions); fall back to SF Symbols if missing; final fallback
+// is a simple drawn circle so we never show a blank button.
 static UIImage *YTSkipSilenceIcon(BOOL active) {
     UIImage *img = nil;
 
@@ -132,17 +118,29 @@ static UIImage *YTSkipSilenceIcon(BOOL active) {
         UIGraphicsEndImageContext();
     }
 
-    // Always template so YouTube can tint appropriately.
     return [img imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
 
 // =============================================================================
-#pragma mark – Top-row overlay button (YTMainAppControlsOverlayView)
+#pragma mark - Runtime helper to access YTVideoOverlay's overlayButtons dict
 // =============================================================================
-//
-// Optional – only used if the user picks "Top" position in YTVideoOverlay
-// settings (key: YTVideoOverlay-SkipSilence-Position == 0).
-//
+
+// YTVideoOverlay attaches an NSMutableDictionary to each overlay view via
+// associated objects, keyed by the property name "overlayButtons". We use
+// objc_getAssociatedObject to read it back without needing the YTVideoOverlay
+// header at compile time.
+static UIButton *YTSGetOverlayButton(id overlayView) {
+    if (overlayView == nil) return nil;
+    id dict = objc_getAssociatedObject(overlayView, "overlayButtons");
+    if (![dict isKindOfClass:[NSDictionary class]]) return nil;
+    id btn = dict[kSkipSilenceTweakKey];
+    if ([btn isKindOfClass:[UIButton class]]) return btn;
+    return nil;
+}
+
+// =============================================================================
+#pragma mark - Top-row overlay button (YTMainAppControlsOverlayView)
+// =============================================================================
 
 %group Top
 
@@ -161,24 +159,24 @@ static UIImage *YTSkipSilenceIcon(BOOL active) {
     [SkipSilenceDefaults setEnabled:newState];
     [SkipSilenceManager shared].enabled = newState;
 
-    // Swap icon on this button instance
-    YTQTMButton *btn = self.overlayButtons[kSkipSilenceTweakKey];
+    UIButton *btn = YTSGetOverlayButton(self);
     if ([btn respondsToSelector:@selector(setImage:forState:)]) {
         [btn setImage:YTSkipSilenceIcon(newState) forState:UIControlStateNormal];
     }
+
+    if (@available(iOS 10.0, *)) {
+        UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+        [g impactOccurred];
+    }
 }
 
-%end // %hook YTMainAppControlsOverlayView
+%end
 
 %end // %group Top
 
 // =============================================================================
-#pragma mark – Bottom-row overlay button (YTInlinePlayerBarContainerView)
+#pragma mark - Bottom-row overlay button (YTInlinePlayerBarContainerView)
 // =============================================================================
-//
-// Default – sits next to the fullscreen button, exactly where YouQuality /
-// YouPiP put their buttons.
-//
 
 %group Bottom
 
@@ -197,24 +195,23 @@ static UIImage *YTSkipSilenceIcon(BOOL active) {
     [SkipSilenceDefaults setEnabled:newState];
     [SkipSilenceManager shared].enabled = newState;
 
-    YTQTMButton *btn = self.overlayButtons[kSkipSilenceTweakKey];
+    UIButton *btn = YTSGetOverlayButton(self);
     if ([btn respondsToSelector:@selector(setImage:forState:)]) {
         [btn setImage:YTSkipSilenceIcon(newState) forState:UIControlStateNormal];
     }
 
-    // Haptic feedback – subtle, like YouTube's own buttons
     if (@available(iOS 10.0, *)) {
         UIImpactFeedbackGenerator *g = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
         [g impactOccurred];
     }
 }
 
-%end // %hook YTInlinePlayerBarContainerView
+%end
 
 %end // %group Bottom
 
 // =============================================================================
-#pragma mark – AVPlayer / AVPlayerItem hooks (tap install site)
+#pragma mark - AVPlayer / AVPlayerItem hooks (tap install site)
 // =============================================================================
 
 %hook AVPlayerItem
@@ -237,7 +234,6 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
 }
 
 - (void)dealloc {
-    // Detach our tap before YouTube tears down the item.
     @try {
         [[SkipSilenceManager shared] detachFromPlayerItem:self];
     } @catch (NSException *e) {}
@@ -254,7 +250,6 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
         [[SkipSilenceManager shared] registerPlayer:self forItem:item];
         [[SkipSilenceManager shared] attachToPlayerItem:item];
     }
-    // Forget the previous item's player mapping
     AVPlayerItem *old = self.currentItem;
     if (old && old != item) {
         [[SkipSilenceManager shared] forgetPlayerForItem:old];
@@ -262,13 +257,8 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
 }
 
 - (void)setRate:(float)rate {
-    // Capture YouTube's intended rate when it's the user-initiated one.
-    // We distinguish YouTube's own rate set from our silence-rate set by
-    // checking whether we're currently in the silencing state.
     SkipSilenceManager *mgr = [SkipSilenceManager shared];
     if (mgr.state == SkipSilenceStateInactive) {
-        // This is a user / YouTube-initiated rate change; remember it as
-        // the "normal" rate we should restore to after silence.
         mgr.userPlaybackRate = rate;
     }
     %orig;
@@ -277,15 +267,13 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
 %end
 
 // =============================================================================
-#pragma mark – YouTube player hooks
+#pragma mark - YouTube player hooks
 // =============================================================================
 
 %hook YTPlayerViewController
 
 - (void)loadWithPlayerTransition:(id)transition playbackConfig:(id)cfg {
     %orig;
-    // A new video loaded. Defer tap attach until the AVPlayerItem appears
-    // (the AVPlayerItem hook will catch it; we just synchronise tunables).
     SkipSilenceManager *mgr = [SkipSilenceManager shared];
     mgr.thresholdDBFS = [SkipSilenceDefaults thresholdDBFS];
     mgr.silenceRate   = [SkipSilenceDefaults silenceRate];
@@ -296,8 +284,6 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
 
 - (void)setPlaybackRate:(CGFloat)rate {
     %orig;
-    // YouTube's user-facing rate control. Capture as the "normal" rate so
-    // we can restore to it when silence ends.
     [SkipSilenceManager shared].userPlaybackRate = (float)rate;
 }
 
@@ -313,7 +299,7 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
 %end
 
 // =============================================================================
-#pragma mark – Tweak entry point
+#pragma mark - Tweak entry point
 // =============================================================================
 
 %ctor {
@@ -326,52 +312,19 @@ automaticallyLoadedAssetKeys:(NSArray<NSString *> *)automaticallyLoadedAssetKeys
         mgr.holdTime      = [SkipSilenceDefaults holdTime];
         mgr.releaseTime   = [SkipSilenceDefaults releaseTime];
 
-        // ---- Register with YTVideoOverlay -----------------------------------
-        // Try both the embedded (sideloaded) and jailbroken dylib paths.
-        NSString *embedded =
-            [[NSBundle mainBundle].bundlePath stringByAppendingPathComponent:@"Frameworks/YTVideoOverlay.dylib"];
-        if ([[NSFileManager defaultManager] fileExistsAtPath:embedded]) {
-            dlopen(embedded.UTF8String, RTLD_LAZY);
-        }
-        // Rootless + classic jailbreak
-        NSArray *jbPaths = @[
-            @"/var/jb/usr/lib/TweakInject/YTVideoOverlay.dylib",
-            @"/var/jb/Library/MobileSubstrate/DynamicLibraries/YTVideoOverlay.dylib",
-            @"/usr/lib/TweakInject/YTVideoOverlay.dylib",
-            @"/Library/MobileSubstrate/DynamicLibraries/YTVideoOverlay.dylib",
-        ];
-        for (NSString *p in jbPaths) {
-            if ([[NSFileManager defaultManager] fileExistsAtPath:p]) {
-                dlopen(p.UTF8String, RTLD_LAZY);
-                break;
-            }
-        }
+        // Register with YTVideoOverlay (inlined, runtime discovery)
+        NSDictionary *metadata = @{
+            kYTVO_AccessibilityLabelKey:   @"Skip Silence",
+            kYTVO_SelectorKey:             @"didPressSkipSilence:",
+            kYTVO_UpdateImageOnVisibleKey: @YES,
+            kYTVO_ExtraBooleanKeys: @[
+                kSkipSilenceEnabledKey,
+                kSkipSilenceShowSavedTimeKey
+            ],
+        };
+        YTSInitVideoOverlay(kSkipSilenceTweakKey, metadata);
 
-        // Call +[YTSettingsSectionItemManager registerTweak:metadata:] if present.
-        Class mgrCls = NSClassFromString(@"YTSettingsSectionItemManager");
-        if (mgrCls && [mgrCls respondsToSelector:@selector(registerTweak:metadata:)]) {
-            // Use the Init.x helper if available; otherwise fall through to a manual call.
-            NSDictionary *metadata = @{
-                @"accessibilityLabel": @"Skip Silence",
-                @"selector":           @"didPressSkipSilence:",
-                @"updateImageOnVisible": @YES,
-                // ToggleKey: NO – let YTVideoOverlay render its own on/off
-                // switch in its settings section; we still own the actual
-                // state via SkipSilenceDefaults.
-                @"extraBooleanKeys":   @[
-                    kSkipSilenceEnabledKey,
-                    kSkipSilenceShowSavedTimeKey
-                ],
-            };
-            [mgrCls performSelector:@selector(registerTweak:metadata:)
-                         withObject:kSkipSilenceTweakKey
-                         withObject:metadata];
-        }
-
-        // ---- Initialise Logos groups ---------------------------------------
-        // %init() with no args initialises the default group (the AVPlayerItem,
-        // AVPlayer, YTPlayerViewController, YTMainAppVideoPlayerOverlayViewController
-        // hooks below — they're not wrapped in %group).
+        // Initialise all Logos groups
         %init();
         %init(Top);
         %init(Bottom);

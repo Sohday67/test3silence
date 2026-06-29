@@ -1,6 +1,6 @@
 # =============================================================================
 #  YTLiteSkipSilence - Theos Makefile
-#  Adds Overcast-style "Skip Silence" + Voice Boost to YouTube via YTLite
+#  Adds Overcast-style "Skip Silence" to YouTube via YTLite + YTVideoOverlay
 # =============================================================================
 
 # ---- package scheme (rootless / roothide) -----------------------------------
@@ -24,12 +24,12 @@ include $(THEOS)/makefiles/common.mk
 # ---- tweak definition -------------------------------------------------------
 TWEAK_NAME = YTLiteSkipSilence
 
-$(TWEAK_NAME)_FRAMEWORKS  = UIKit Foundation AVFoundation CoreMedia AudioToolbox CoreAudio
+$(TWEAK_NAME)_FRAMEWORKS = UIKit Foundation AVFoundation CoreMedia AudioToolbox CoreAudio
 $(TWEAK_NAME)_WEAKFRAMEWORKS = MediaToolbox
-$(TWEAK_NAME)_CFLAGS   = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-function
-$(TWEAK_NAME)_LDFLAGS  = -framework AudioToolbox -framework CoreAudio -framework AVFoundation
+$(TWEAK_NAME)_CFLAGS = -fobjc-arc -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-function -Wno-unused-but-set-variable -Wno-objc-method-access
+$(TWEAK_NAME)_LDFLAGS = -framework AudioToolbox -framework CoreAudio -framework AVFoundation
 
-# Wildcard picks up every .x in repo root; Utils .m files listed explicitly.
+# All .x files in repo root + all .m files in Utils/
 $(TWEAK_NAME)_FILES = \
 	$(wildcard *.x) \
 	Utils/SkipSilenceManager.m \
@@ -37,9 +37,14 @@ $(TWEAK_NAME)_FILES = \
 	Utils/NSBundle+YTSkipSilence.m \
 	Utils/Reachability.m
 
-# Vendor headers (PoomSmart/YouTubeHeader + PSHeader + YTVideoOverlay) must
-# be resolvable either via THEOS_INCLUDE_PATH or as sibling checkouts - see README.md.
-$(TWEAK_NAME)_CFLAGS += -I$(THEOS)/include -I../YouTubeHeader -I../PSHeader -I../YTVideoOverlay
+# Include paths - use THEOS/include (where CI / dev installs vendor headers)
+# Plus sibling checkouts as a fallback for local dev.
+$(TWEAK_NAME)_CFLAGS += \
+	-I$(THEOS)/include \
+	-I$(THEOS)/include/vendor \
+	-I../YouTubeHeader \
+	-I../PSHeader \
+	-I../YTVideoOverlay
 
 # Bundle resources - installed into the package's /Library/Application Support/
 $(TWEAK_NAME)_BUNDLE_RESOURCES = Resources/YTLiteSkipSilence.bundle
