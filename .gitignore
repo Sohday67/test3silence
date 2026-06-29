@@ -1,0 +1,31 @@
+# Theos build artifacts
+/theos/
+/packages/
+/.theos/
+/obj/
+/obj*/
+*.deb
+*.dylib
+*.dSYM
+.DS_Store
+
+# Vendor sources (checked out by CI / dev)
+/YouTubeHeader/
+/PSHeader/
+/YTVideoOverlay/
+
+# IDE
+.vscode/
+.idea/
+*.xcworkspace/
+*.xcuserstate
+*.swp
+*~
+
+# Logs
+*.log
+build.log
+
+# Local overrides
+Makefile.local
+.env

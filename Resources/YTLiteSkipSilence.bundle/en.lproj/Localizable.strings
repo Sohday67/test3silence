@@ -1,0 +1,34 @@
+/* YTLiteSkipSilence English strings */
+
+/* Master toggle */
+"Skip Silence" = "Skip Silence";
+"Skip Silence lets you speed through silent regions of videos, like Overcast's Smart Speed." = "Skip Silence lets you speed through silent regions of videos, like Overcast's Smart Speed.";
+
+/* Picker rows */
+"Silence Threshold" = "Silence Threshold";
+"Silence Speed" = "Silence Speed";
+
+/* Threshold options */
+"-25 dB" = "-25 dB";
+"-30 dB" = "-30 dB";
+"-35 dB" = "-35 dB";
+"-40 dB" = "-40 dB";
+"-45 dB" = "-45 dB";
+
+/* Speed options */
+"1.5x" = "1.5x";
+"2.0x" = "2.0x";
+"2.5x" = "2.5x";
+"3.0x" = "3.0x";
+"4.0x" = "4.0x";
+
+/* Stats */
+"%@ seconds saved" = "%@ seconds saved";
+"Reset Saved Time" = "Reset Saved Time";
+"Skip Silence: %.1fs saved" = "Skip Silence: %.1fs saved";
+
+/* Section */
+"SKIP_SILENCE_SECTION_TITLE" = "Skip Silence";
+
+/* Accessibility */
+"Skip Silence – toggle to dynamically speed up silent regions of the video." = "Skip Silence – toggle to dynamically speed up silent regions of the video.";

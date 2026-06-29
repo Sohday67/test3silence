@@ -1,0 +1,31 @@
+{
+    "name": "YTLiteSkipSilence",
+    "package": "com.dvntm.ytlite.skipsilence",
+    "author": {
+        "name": "YTLiteSkipSilence Contributors",
+        "email": ""
+    },
+    "version": "1.0.0",
+    "depiction": "https://raw.githubusercontent.com/dayanch96/YTLite/main/Resources/depiction.json",
+    "description": "Overcast-style Skip Silence + Voice Boost for YouTube. Adds a clean YTVideoOverlay toggle button that dynamically speeds up silent regions of videos.",
+    "screenshots": [],
+    "versions": [
+        {
+            "version": "1.0.0",
+            "date": "2025-06-30",
+            "size": 80000,
+            "sha256": "",
+            "download": ""
+        }
+    ],
+    "header": "Skip Silence for YouTube",
+    "category": "Tweaks",
+    "minIOSVersion": "13.0",
+    "dependency": "com.ps.ytvideooverlay (>= 2.0.0)",
+    "changelog": [
+        {
+            "version": "1.0.0",
+            "changes": "Initial release. Overcast-style real-time silence detector via MTAudioProcessingTap. Clean YTVideoOverlay toggle button (top or bottom row). In-app settings section (ID 790) with threshold, speed, time-saved counter."
+        }
+    ]
+}
